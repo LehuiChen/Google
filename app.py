@@ -203,13 +203,20 @@ def main():
 
     # B. Basic Error Analysis (Energy)
     elif "基础误差分析" in selected_nav and has_energy:
-        st.header("📉 基础误差分析")
+        st.header("📉 基础误差分析 & 趋势概览")
         df = st.session_state['energy_data']
         methods = [c for c in df.columns if c != "System"]
         plot_methods = [m for m in methods if m != benchmark_method]
 
-        tab1, tab2 = st.tabs(["📦 模块 1: 误差分布箱线图", "🌡️ 模块 2: 误差方向热力图"])
+        # Expanded to 4 Tabs
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "📦 模块 1: 误差分布箱线图", 
+            "📈 模块 2: 排序能垒趋势图",
+            "🔗 模块 3: 全局相关性散点图",
+            "🌡️ 模块 4: 误差方向热力图"
+        ])
 
+        # Tab 1: Box Plot
         with tab1:
             st.markdown(f"**分析目标**: 展示各方法相对于基准 **{benchmark_method}** 的绝对误差分布。")
             fig = go.Figure()
@@ -228,8 +235,75 @@ def main():
             )
             st.plotly_chart(fig, use_container_width=True, config=PLOT_CONFIG)
             st.caption("* 红色虚线代表 1.0 kcal/mol 化学精度。")
-
+        
+        # Tab 2: Sorted Trend Plot (NEW)
         with tab2:
+            st.markdown(f"**分析目标**: 按照基准方法 **{benchmark_method}** 的能垒大小排序，观察其他方法的趋势一致性。")
+            
+            # Sort dataframe by benchmark
+            df_sorted = df.sort_values(by=benchmark_method)
+            
+            fig = go.Figure()
+            for m in methods:
+                # Highlight benchmark line
+                is_bench = (m == benchmark_method)
+                width = 3 if is_bench else 1.5
+                opacity = 1.0 if is_bench else 0.7
+                
+                fig.add_trace(go.Scatter(
+                    x=df_sorted["System"], 
+                    y=df_sorted[m], 
+                    mode='lines+markers', 
+                    name=m,
+                    line=dict(width=width),
+                    opacity=opacity,
+                    marker=dict(size=marker_size - 2 if not is_bench else marker_size)
+                ))
+            
+            fig.update_layout(
+                title=f"排序能垒趋势 (Sorted by {benchmark_method})",
+                xaxis_title="System (Sorted)",
+                yaxis_title="Energy (kcal/mol)",
+                template=selected_theme,
+                height=600
+            )
+            st.plotly_chart(fig, use_container_width=True, config=PLOT_CONFIG)
+            st.caption(f"* 加粗线条为基准方法 {benchmark_method}。")
+
+        # Tab 3: Global Correlation Plot (NEW)
+        with tab3:
+            st.markdown(f"**分析目标**: 在同一张图中展示所有方法与基准 **{benchmark_method}** 的相关性。")
+            fig = go.Figure()
+            
+            # Add diagonal reference line
+            all_vals = df[methods].values.flatten()
+            min_val, max_val = min(all_vals), max(all_vals)
+            fig.add_shape(type="line", x0=min_val, x1=max_val, y0=min_val, y1=max_val,
+                          line=dict(color="gray", dash="dash"))
+            
+            # Add traces for all other methods
+            for m in plot_methods:
+                fig.add_trace(go.Scatter(
+                    x=df[benchmark_method], 
+                    y=df[m], 
+                    mode='markers', 
+                    name=m,
+                    text=df["System"],
+                    marker=dict(size=marker_size, opacity=0.8)
+                ))
+            
+            fig.update_layout(
+                title=f"全局相关性散点图 (All vs {benchmark_method})",
+                xaxis_title=f"{benchmark_method} (kcal/mol)",
+                yaxis_title="Other Methods (kcal/mol)",
+                template=selected_theme,
+                height=600
+            )
+            st.plotly_chart(fig, use_container_width=True, config=PLOT_CONFIG)
+            st.caption("* 灰色虚线代表 y=x (完美预测线)。")
+
+        # Tab 4: Signed Error Heatmap (Moved)
+        with tab4:
             st.markdown(f"**分析目标**: 区分高估（红色）与低估（蓝色）。")
             # Calculate Signed Error
             df_numeric = df.set_index("System")[methods]
@@ -339,10 +413,10 @@ def main():
         methods = [c for c in df.columns if c != "System"]
         other_methods = [m for m in methods if m != benchmark_method]
         
-        tab5, tab6 = st.tabs(["🔗 模块 5: 相关性回归", "🎯 模块 6: Bland-Altman 分析"])
+        tab5, tab6 = st.tabs(["🔗 模块 5: 相关性回归 (单方法)", "🎯 模块 6: Bland-Altman 分析"])
         
         with tab5:
-            st.markdown(f"**分析目标**: 评估其他方法与基准 **{benchmark_method}** 的线性相关性。")
+            st.markdown(f"**分析目标**: 评估特定方法与基准 **{benchmark_method}** 的线性相关性详情。")
             
             col_sel, col_chart = st.columns([1, 4])
             with col_sel:
