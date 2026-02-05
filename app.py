@@ -532,13 +532,6 @@ def main():
                 df_merged["AbsError"] = (df_merged["Energy"] - df_merged["Bench_Energy"]).abs()
                 df_plot_struct = df_merged[df_merged["Method"] != benchmark_method]
 
-                # --- Data Prep for Outlier Labeling ---
-                # Label only if AbsError > 2 * e_tol OR RMSD > 2 * r_tol
-                df_plot_struct['Outlier_Label'] = df_plot_struct.apply(
-                    lambda row: row['System'] if (row['AbsError'] > 2 * e_tol or row['RMSD'] > 2 * r_tol) else "", 
-                    axis=1
-                )
-
                 # Module 8: RMSD Heatmap
                 st.markdown("##### 🧱 模块 8: RMSD 概览热力图")
                 df_rmsd_pivot = df_rmsd.set_index("System")
@@ -572,7 +565,16 @@ def main():
                 # --- Module 9: Structure-Energy Error Attribution (Major Upgrade) ---
                 st.markdown("##### 🩺 模块 9: 结构-能量误差归因诊断图")
                 
-                # Plot with Marginal Box Plots and Outlier Labels
+                # 1. Calculate Plot Boundaries (Force display of zones)
+                # Get data maximums
+                data_max_x = df_plot_struct["RMSD"].max()
+                data_max_y = df_plot_struct["AbsError"].max()
+                
+                # Logic: Limit should be at least 1.5x the tolerance to show the boundary lines clearly
+                x_limit = max(data_max_x * 1.05, r_tol * 1.5)
+                y_limit = max(data_max_y * 1.05, e_tol * 1.5)
+
+                # 2. Create Scatter Plot (No text labels, just clean dots)
                 fig_struct = px.scatter(
                     df_plot_struct,
                     x="RMSD",
@@ -581,25 +583,19 @@ def main():
                     hover_data=["System"],
                     symbol="Method",
                     template="plotly_white",
-                    text="Outlier_Label", # Auto-label outliers
+                    # text="Outlier_Label", # Removed text labels to reduce clutter
                     marginal_x="box",     # Marginal Box plot
                     marginal_y="box"      # Marginal Box plot
                 )
                 
-                # FIXED: Added selector to only target scatter plots, preventing ValueError on box plots
+                # 3. Update Traces (Scatter specific styles)
                 fig_struct.update_traces(
-                    marker=dict(size=12, opacity=0.8, line=dict(width=1, color='DarkSlateGrey')),
-                    textposition='top center',
-                    selector=dict(type='scatter')
+                    marker=dict(size=14, opacity=0.8, line=dict(width=1, color='White')),
+                    selector=dict(type='scatter') # CRITICAL: Prevent ValueError on box plots
                 )
 
-                # --- Background Zones (Diagnostic Regions) ---
-                # Determine plot bounds for shapes
-                max_x = df_plot_struct["RMSD"].max() * 1.15
-                max_y = df_plot_struct["AbsError"].max() * 1.15
-                # Avoid zero ranges
-                if max_x == 0: max_x = 1.0
-                if max_y == 0: max_y = 1.0
+                # 4. Background Zones (Diagnostic Regions)
+                # Layer="below" ensures points are on top
                 
                 # Zone 1: Safe Zone (Bottom Left) - Green
                 fig_struct.add_shape(
@@ -609,29 +605,32 @@ def main():
                 
                 # Zone 2: Electronic Error (Top Left) - Yellow
                 fig_struct.add_shape(
-                    type="rect", x0=0, x1=r_tol, y0=e_tol, y1=max_y,
+                    type="rect", x0=0, x1=r_tol, y0=e_tol, y1=y_limit,
                     fillcolor="gold", opacity=0.08, line_width=0, layer="below", row=1, col=1
                 )
                 
                 # Zone 3: Structural Failure (Right Side) - Red
+                # Covers everything where RMSD > r_tol
                 fig_struct.add_shape(
-                    type="rect", x0=r_tol, x1=max_x, y0=0, y1=max_y,
+                    type="rect", x0=r_tol, x1=x_limit, y0=0, y1=y_limit,
                     fillcolor="red", opacity=0.08, line_width=0, layer="below", row=1, col=1
                 )
 
-                # --- Reference Lines ---
+                # 5. Reference Lines
                 fig_struct.add_vline(x=r_tol, line_dash="dash", line_color="gray", line_width=2, annotation_text="RMSD Tol", annotation_position="top right")
                 fig_struct.add_hline(y=e_tol, line_dash="dash", line_color="gray", line_width=2, annotation_text="E Tol", annotation_position="top right")
 
-                # Update Layout with Large Fonts & Dimensions
+                # 6. Update Layout (Axes Ranges & Style)
                 fig_struct.update_layout(
-                    height=900, # Matches config
+                    height=900,
+                    width=1600, # Explicit width helps with consistent export aspect ratio
                     title=dict(text=f"Diagnostic: Structure vs Energy (Benchmark: {benchmark_method})", font=dict(size=32)),
                     xaxis_title="RMSD (Å)",
                     yaxis_title="Absolute Energy Error (kcal/mol)",
                     font=dict(family="Arial", size=24, color="black"),
-                    xaxis=dict(tickfont=dict(size=22), title_font=dict(size=28), range=[0, max_x]), # Force range for shapes
-                    yaxis=dict(tickfont=dict(size=22), title_font=dict(size=28), range=[0, max_y]), # Force range for shapes
+                    # Force axes ranges to ensure zones are visible
+                    xaxis=dict(tickfont=dict(size=22), title_font=dict(size=28), range=[0, x_limit]), 
+                    yaxis=dict(tickfont=dict(size=22), title_font=dict(size=28), range=[0, y_limit]),
                     legend=dict(font=dict(size=22))
                 )
                 st.plotly_chart(fig_struct, use_container_width=True, config=PLOT_CONFIG)
