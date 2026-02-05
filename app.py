@@ -586,9 +586,11 @@ def main():
                     marginal_y="box"      # Marginal Box plot
                 )
                 
+                # FIXED: Added selector to only target scatter plots, preventing ValueError on box plots
                 fig_struct.update_traces(
                     marker=dict(size=12, opacity=0.8, line=dict(width=1, color='DarkSlateGrey')),
-                    textposition='top center'
+                    textposition='top center',
+                    selector=dict(type='scatter')
                 )
 
                 # --- Background Zones (Diagnostic Regions) ---
