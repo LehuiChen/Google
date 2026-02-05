@@ -14,15 +14,16 @@ st.set_page_config(
 )
 
 # High-Definition Export Configuration (Mandatory)
+# Updated to High-Res PNG as requested
 PLOT_CONFIG = {
     'toImageButtonOptions': {
-        'format': 'svg',  # Vector format preferred
+        'format': 'png',          # 强制使用 PNG 格式
         'filename': 'chem_viz_plot',
-        'height': 900,
-        'width': 1200,
-        'scale': 2        # High resolution for raster fallbacks
+        'height': 1000,           # 基础高度
+        'width': 1200,            # 基础宽度
+        'scale': 4                # 关键参数：4倍缩放，生成约 4800x4000 像素的超清大图
     },
-    'displaylogo': False
+    'displaylogo': False          # 隐藏 Plotly logo 让图片更干净
 }
 
 # --- 2. Helper Functions ---
@@ -258,6 +259,40 @@ def main():
     # =========================================================
     with tabs[1]:
         st.subheader("2. 化学规律探索 (Chemical Trends)")
+
+        # --- Module B: Benchmark-Sorted Trend Plot (New Feature) ---
+        st.markdown("##### 📈 模块 B: 基准排序趋势图 (Benchmark-Sorted Trend)")
+        
+        # Sort Dataframe by Benchmark Method
+        df_sorted = df_energy.sort_values(by=benchmark_method)
+        
+        # Melt for plotting
+        df_sorted_melt = df_sorted.melt(id_vars="System", value_vars=methods, var_name="Method", value_name="Energy")
+        
+        fig_trend = px.line(
+            df_sorted_melt,
+            x="System",
+            y="Energy",
+            color="Method",
+            markers=True,
+            template="plotly_white",
+            labels={"Energy": "Energy (kcal/mol)"}
+        )
+        
+        # Highlight Benchmark Line
+        fig_trend.update_traces(line=dict(width=1.5), opacity=0.7) # Dim others slightly
+        # Re-assert benchmark style (bold)
+        # We need to iterate traces to find the benchmark one because px assigns colors automatically
+        fig_trend.update_traces(selector=dict(name=benchmark_method), line=dict(width=4, dash='solid'), opacity=1.0)
+
+        fig_trend.update_layout(
+            title=f"Energy Trend (Sorted by {benchmark_method})",
+            xaxis_title="System (Sorted by Benchmark Energy)"
+        )
+        st.plotly_chart(fig_trend, use_container_width=True, config=PLOT_CONFIG)
+        st.caption(f"*此图按基准 {benchmark_method} 能垒从小到大排序。理想情况下，其他方法的曲线应单调上升。如果某方法的曲线出现剧烈震荡或交叉，说明该方法判断反应相对难易程度的趋势有误。*")
+
+        st.divider()
         
         # Module 4: Substituent Effect
         st.markdown("##### 📊 模块 4: 相对能垒 / 取代基效应 ($\Delta\Delta E$)")
@@ -304,6 +339,29 @@ def main():
     # =========================================================
     with tabs[2]:
         st.subheader("3. 方法学评估 (Methodology Assessment)")
+
+        # --- Module A: Inter-method Correlation Heatmap (New Feature) ---
+        st.markdown("##### 🌡️ 模块 A: 方法间相关性热力图 (Pearson Correlation)")
+        
+        # Calculate Correlation Matrix
+        corr_matrix = df_energy[methods].corr().round(2)
+        
+        fig_corr_heat = px.imshow(
+            corr_matrix,
+            text_auto=True,
+            color_continuous_scale='RdBu_r',
+            zmin=-1,
+            zmax=1,
+            labels=dict(x="Method", y="Method", color="Pearson R"),
+            template="plotly_white"
+        )
+        fig_corr_heat.update_layout(
+            title="Correlation Matrix (Pearson R)",
+            height=600
+        )
+        st.plotly_chart(fig_corr_heat, use_container_width=True, config=PLOT_CONFIG)
+
+        st.divider()
         
         target_method = st.selectbox("选择待评估方法 (Target Method)", plot_methods)
         
