@@ -463,16 +463,36 @@ def main():
             df_rmsd_long = df_rmsd.melt(id_vars="System", var_name="Method", value_name="RMSD")
             df_merged = pd.merge(df_energy_long, df_rmsd_long, on=["System", "Method"], how="inner")
             
-            # --- 1. Substituent Extraction (New) ---
-            # Extract the part after the last hyphen if it exists, otherwise use full name
+            # --- 1. Enhanced Data Preprocessing ---
+            # Extract Substituent
             df_merged['Substituent'] = df_merged['System'].apply(lambda x: x.split('-')[-1] if '-' in x else x)
 
+            # Extract Core Type (C1 - C6)
+            def get_core_type(name):
+                # Reverse match to ensure C12 is not matched as C1 first if present (though loop order handles substring check)
+                for i in range(6, 0, -1):
+                    if f"C{i}" in name:
+                        return f"C{i}"
+                return "Other"
+            
+            df_merged['Core_Type'] = df_merged['System'].apply(get_core_type)
+
+            # Smart Labeling (Only label outliers)
+            def get_label(row):
+                if row['RMSD'] > r_tol or row['AbsError'] > e_tol:
+                    return row['System']
+                return ""
+            
             if df_merged.empty:
                 st.error("合并失败：能垒数据和 RMSD 数据没有共同的 System 或 Method 名称。")
             else:
                 bench_map = df_energy.set_index("System")[benchmark_method].to_dict()
                 df_merged["Bench_Energy"] = df_merged["System"].map(bench_map)
                 df_merged["AbsError"] = (df_merged["Energy"] - df_merged["Bench_Energy"]).abs()
+                
+                # Apply smart label logic after AbsError calculation
+                df_merged['Label'] = df_merged.apply(get_label, axis=1)
+
                 df_plot_struct = df_merged[df_merged["Method"] != benchmark_method]
 
                 st.markdown("##### 🧱 模块 8: RMSD 概览热力图")
@@ -510,7 +530,18 @@ def main():
                 x_limit = max(data_max_x * 1.1, r_tol * 1.5)
                 y_limit = max(data_max_y * 1.1, e_tol * 1.5)
 
-                # --- Tabs Layout (New) ---
+                # Symbol Map for Core Types
+                symbol_map_core = {
+                    'C1': 'circle',
+                    'C2': 'triangle-up',
+                    'C3': 'square',
+                    'C4': 'diamond',
+                    'C5': 'pentagon',
+                    'C6': 'hexagon',
+                    'Other': 'star'
+                }
+
+                # --- Tabs Layout ---
                 tab_global, tab_single = st.tabs(["📊 全局总览 (All Methods)", "🔍 分方法诊断 (Single Method)"])
 
                 # --- Tab 1: Global Overview ---
@@ -526,9 +557,10 @@ def main():
                             "AbsError": ":.2f", 
                             "System": False,
                             "Method": True,
-                            "Substituent": True
+                            "Substituent": True,
+                            "Core_Type": True
                         },
-                        symbol="Method",
+                        symbol="Method", # Keep Method symbols for global view distinction
                         template="plotly_white"
                     )
                     
@@ -559,9 +591,9 @@ def main():
                     )
                     st.plotly_chart(fig_struct, use_container_width=True, config=PLOT_CONFIG)
                 
-                # --- Tab 2: Single Method Diagnostics (New) ---
+                # --- Tab 2: Single Method Diagnostics (Updated) ---
                 with tab_single:
-                    st.info("💡 下图按 **'基团 (Substituent)'** 着色，帮助发现针对特定化学结构的系统性偏差。")
+                    st.info("💡 符号形状代表 **'骨架类型 (Core Type)'** (六边形=C6, 五边形=C5...)，颜色代表 **'取代基 (Substituent)'**。仅标注超出阈值的离群点。")
                     
                     unique_methods = df_plot_struct['Method'].unique()
                     
@@ -576,16 +608,19 @@ def main():
                             subset,
                             x="RMSD",
                             y="AbsError",
-                            color="Substituent",  # Key Feature: Color by chemical group
-                            text="System",        # Key Feature: Show labels directly
-                            title=f"Diagnostic: {m} (Colored by Substituent)",
-                            hover_data=["System", "AbsError", "RMSD"],
+                            color="Substituent",          # Color by chemical group
+                            symbol="Core_Type",           # NEW: Symbol by Core skeleton
+                            symbol_map=symbol_map_core,   # NEW: Custom shape map
+                            text="Label",                 # NEW: Smart labeling
+                            title=f"Diagnostic: {m} (Colored by Substituent, Shaped by Core)",
+                            hover_data=["System", "AbsError", "RMSD", "Core_Type"],
                             template="plotly_white"
                         )
 
-                        # Enhance visibility
+                        # Enhance visibility & Font
                         fig_single.update_traces(
-                            textposition='top center', 
+                            textposition='top center',
+                            textfont=dict(size=12, color='black'),
                             marker=dict(size=14, opacity=0.9, line=dict(width=1, color='White'))
                         )
 
@@ -607,7 +642,7 @@ def main():
                             font=dict(family="Arial", size=24, color="black"),
                             xaxis=dict(tickfont=dict(size=22), title_font=dict(size=28), range=[0, x_limit], showgrid=True), 
                             yaxis=dict(tickfont=dict(size=22), title_font=dict(size=28), range=[0, y_limit], showgrid=True),
-                            legend=dict(font=dict(size=22), title=dict(text="Group"))
+                            legend=dict(font=dict(size=22), title=dict(text="Legend"))
                         )
                         st.plotly_chart(fig_single, use_container_width=True, config=PLOT_CONFIG)
                         st.divider()
