@@ -19,7 +19,7 @@ PLOT_CONFIG = {
         'format': 'png',
         'filename': 'chem_viz_plot',
         'height': 900,
-        'width': 1600,
+        'width': 1000, # Updated to square-ish ratio
         'scale': 3
     },
     'displaylogo': False
@@ -504,8 +504,7 @@ def main():
                 
                 df_merged['Core_Type'] = df_merged['System'].apply(get_core_type)
 
-                # 1.3 Minimalist Labeling Strategy
-                # Logic: Label = System ONLY if (RMSD > r_tol OR AbsError > e_tol). Else None.
+                # 1.3 Minimalist Labeling Strategy (Legacy for global plot)
                 def get_smart_label(row):
                     if row['RMSD'] > r_tol or row['AbsError'] > e_tol:
                         return row['System']
@@ -618,10 +617,11 @@ def main():
                 
                 # --- Tab 2: Single Method Diagnostics (Independent Large Plots) ---
                 with tab_single:
-                    st.info("💡 **独立大图模式**: 按 **方法 -> 骨架** 顺序纵向展示。**黑色五角星** 为锚点体系 (Reference Anchor)。")
+                    st.info("💡 **独立大图模式**: 按 **方法 -> 骨架** 顺序纵向展示。标签仅显示远离群体的点 (统计学离群判定)。")
                     
                     unique_methods = df_plot_struct['Method'].unique()
-                    core_order = ["C1", "C2", "C3", "C4", "C5", "C6", "DA", "Other"]
+                    # Updated Core Order: Removed 'DA', 'Other'
+                    core_order = ["C1", "C2", "C3", "C4", "C5", "C6"]
 
                     for m in unique_methods:
                         st.markdown(f"## 🔹 方法: {m}")
@@ -629,11 +629,6 @@ def main():
                         
                         # Filter for method
                         method_subset = df_plot_struct[df_plot_struct['Method'] == m].copy()
-                        
-                        # Static Label: Logic for labels only on outliers
-                        method_subset['Static_Label'] = method_subset.apply(
-                            lambda row: row['System'] if (row['RMSD'] > r_tol or row['AbsError'] > e_tol) else "", axis=1
-                        )
                         
                         # Reference Anchor Data
                         anchor_row = method_subset[method_subset['System'] == anchor_sys]
@@ -643,14 +638,36 @@ def main():
                             core_subset = method_subset[method_subset['Core_Type'] == core]
                             
                             # Filter out anchor from main scatter data to avoid duplication/label clutter
-                            plot_data = core_subset[core_subset['System'] != anchor_sys]
+                            plot_data = core_subset[core_subset['System'] != anchor_sys].copy()
                             
                             if plot_data.empty and anchor_row.empty:
                                 continue
 
                             st.markdown(f"### 🧬 {core} 体系 ({m})")
+                            
+                            # --- Statistical Outlier Detection Logic ---
+                            if len(plot_data) >= 3:
+                                mu_x = plot_data['RMSD'].mean()
+                                mu_y = plot_data['AbsError'].mean()
+                                
+                                # Calculate Euclidean distance to centroid for each point
+                                plot_data['dist_to_center'] = np.sqrt(
+                                    (plot_data['RMSD'] - mu_x)**2 + 
+                                    (plot_data['AbsError'] - mu_y)**2
+                                )
+                                
+                                # Dynamic Threshold: Mean + 2 * Std
+                                dist_threshold = plot_data['dist_to_center'].mean() + 2.0 * plot_data['dist_to_center'].std()
+                                
+                                plot_data['Stat_Label'] = plot_data.apply(
+                                    lambda row: row['System'] if row['dist_to_center'] > dist_threshold else None, 
+                                    axis=1
+                                )
+                            else:
+                                # Too few points, label all
+                                plot_data['Stat_Label'] = plot_data['System']
 
-                            # Create individual figure (Full Size)
+                            # Create individual figure (Square Ratio)
                             fig_core = px.scatter(
                                 plot_data,
                                 x="RMSD",
@@ -658,19 +675,19 @@ def main():
                                 color="Substituent",
                                 symbol="Core_Type",           # Keep symbol mapping for visual consistency
                                 symbol_map=symbol_map_core,
-                                text="Static_Label",
+                                text="Stat_Label",            # Use new statistical labels
                                 hover_data=["System", "AbsError", "RMSD"],
                                 template="plotly_white",
                                 color_discrete_sequence=px.colors.qualitative.Dark24
                             )
 
-                            # Style traces: Small markers (9px), text
+                            # Style traces: Size 10
                             fig_core.update_traces(
                                 mode='markers+text',
                                 textposition='top center',
                                 textfont=dict(size=14, color='black'),
                                 marker=dict(
-                                    size=9, 
+                                    size=10, 
                                     opacity=0.8, 
                                     line=dict(width=1, color='DarkSlateGrey')
                                 )
@@ -698,10 +715,10 @@ def main():
                             fig_core.add_vline(x=r_tol, line_dash="dash", line_color="gray", line_width=2)
                             fig_core.add_hline(y=e_tol, line_dash="dash", line_color="gray", line_width=2)
 
-                            # Layout updates: Lock axes to global limits
+                            # Layout updates: Lock axes to global limits, Square Canvas
                             fig_core.update_layout(
-                                height=700, 
-                                width=1200,
+                                height=900, 
+                                width=1000,
                                 title=dict(text=f"{m} - {core} Core Diagnostic", font=dict(size=24)),
                                 font=dict(family="Arial", size=18, color="black"),
                                 legend=dict(font=dict(size=16), title=dict(text="Substituent")),
