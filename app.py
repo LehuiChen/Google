@@ -4,6 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 from scipy import stats
+from scipy.spatial.distance import cdist  # Added for NND algorithm
 
 # --- 1. Page Config & Global Styles ---
 st.set_page_config(
@@ -19,7 +20,7 @@ PLOT_CONFIG = {
         'format': 'png',
         'filename': 'chem_viz_plot',
         'height': 900,
-        'width': 1000, # Updated to square-ish ratio
+        'width': 1000, # Square-ish ratio
         'scale': 3
     },
     'displaylogo': False
@@ -617,7 +618,7 @@ def main():
                 
                 # --- Tab 2: Single Method Diagnostics (Independent Large Plots) ---
                 with tab_single:
-                    st.info("💡 **独立大图模式**: 按 **方法 -> 骨架** 顺序纵向展示。标签仅显示远离群体的点 (统计学离群判定)。")
+                    st.info("💡 **独立大图模式**: 按 **方法 -> 骨架** 顺序纵向展示。标签算法已升级为 **最近邻孤立检测 (NND)**，即使数据分布松散也能准确标注离群点。")
                     
                     unique_methods = df_plot_struct['Method'].unique()
                     # Updated Core Order: Removed 'DA', 'Other'
@@ -645,22 +646,37 @@ def main():
 
                             st.markdown(f"### 🧬 {core} 体系 ({m})")
                             
-                            # --- Statistical Outlier Detection Logic ---
+                            # --- Nearest Neighbor Distance (NND) Outlier Detection Logic ---
                             if len(plot_data) >= 3:
-                                mu_x = plot_data['RMSD'].mean()
-                                mu_y = plot_data['AbsError'].mean()
+                                # 1. Normalization (Min-Max)
+                                rmsd_range = plot_data['RMSD'].max() - plot_data['RMSD'].min() + 1e-6
+                                err_range = plot_data['AbsError'].max() - plot_data['AbsError'].min() + 1e-6
                                 
-                                # Calculate Euclidean distance to centroid for each point
-                                plot_data['dist_to_center'] = np.sqrt(
-                                    (plot_data['RMSD'] - mu_x)**2 + 
-                                    (plot_data['AbsError'] - mu_y)**2
-                                )
+                                rmsd_norm = (plot_data['RMSD'] - plot_data['RMSD'].min()) / rmsd_range
+                                eng_norm = (plot_data['AbsError'] - plot_data['AbsError'].min()) / err_range
                                 
-                                # Dynamic Threshold: Mean + 2 * Std
-                                dist_threshold = plot_data['dist_to_center'].mean() + 2.0 * plot_data['dist_to_center'].std()
+                                coords = np.column_stack((rmsd_norm, eng_norm))
+                                
+                                # 2. Distance Matrix Calculation
+                                dists = cdist(coords, coords)
+                                np.fill_diagonal(dists, np.inf) # Ignore self-distance
+                                
+                                # 3. Find Nearest Neighbor Distance
+                                min_dists = dists.min(axis=1)
+                                
+                                # 4. Dynamic Threshold (Median * 2.5)
+                                nnd_median = np.median(min_dists)
+                                nnd_threshold = nnd_median * 2.5
+                                
+                                outlier_mask = min_dists > nnd_threshold
+                                
+                                # 5. Fallback: Absolute extreme values
+                                abs_mask = (plot_data['RMSD'] > r_tol * 2) | (plot_data['AbsError'] > e_tol * 2)
+                                
+                                final_mask = outlier_mask | abs_mask
                                 
                                 plot_data['Stat_Label'] = plot_data.apply(
-                                    lambda row: row['System'] if row['dist_to_center'] > dist_threshold else None, 
+                                    lambda row: row['System'] if final_mask[plot_data.index.get_loc(row.name)] else None,
                                     axis=1
                                 )
                             else:
@@ -675,7 +691,7 @@ def main():
                                 color="Substituent",
                                 symbol="Core_Type",           # Keep symbol mapping for visual consistency
                                 symbol_map=symbol_map_core,
-                                text="Stat_Label",            # Use new statistical labels
+                                text="Stat_Label",            # Use new NND labels
                                 hover_data=["System", "AbsError", "RMSD"],
                                 template="plotly_white",
                                 color_discrete_sequence=px.colors.qualitative.Dark24
