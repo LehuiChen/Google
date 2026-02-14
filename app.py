@@ -467,6 +467,10 @@ def main():
         with st.sidebar.expander("4. 诊断图阈值设置 (Diagnosis Thresholds)", expanded=True):
             e_tol = st.slider("Energy Tolerance (kcal/mol)", 0.1, 5.0, 1.0, step=0.1)
             r_tol = st.slider("RMSD Tolerance (Å)", 0.01, 1.0, 0.1, step=0.01)
+            
+            # --- New Anchor Selector ---
+            all_systems = df_energy['System'].unique() if df_energy is not None else []
+            anchor_sys = st.selectbox("选择锚点体系 (Reference Anchor)", all_systems, index=0 if len(all_systems) > 0 else 0)
 
         if df_rmsd is None:
             st.warning("⚠️ 此功能需要同时上传 RMSD 数据。请在侧边栏上传或加载演示数据。")
@@ -614,7 +618,7 @@ def main():
                 
                 # --- Tab 2: Single Method Diagnostics (Independent Large Plots) ---
                 with tab_single:
-                    st.info("💡 **独立大图模式**: 按 **方法 -> 骨架** 顺序纵向展示，便于查看细节。")
+                    st.info("💡 **独立大图模式**: 按 **方法 -> 骨架** 顺序纵向展示。**黑色五角星** 为锚点体系 (Reference Anchor)。")
                     
                     unique_methods = df_plot_struct['Method'].unique()
                     core_order = ["C1", "C2", "C3", "C4", "C5", "C6", "DA", "Other"]
@@ -630,19 +634,25 @@ def main():
                         method_subset['Static_Label'] = method_subset.apply(
                             lambda row: row['System'] if (row['RMSD'] > r_tol or row['AbsError'] > e_tol) else "", axis=1
                         )
+                        
+                        # Reference Anchor Data
+                        anchor_row = method_subset[method_subset['System'] == anchor_sys]
 
                         for core in core_order:
                             # Filter for core type
                             core_subset = method_subset[method_subset['Core_Type'] == core]
                             
-                            if core_subset.empty:
+                            # Filter out anchor from main scatter data to avoid duplication/label clutter
+                            plot_data = core_subset[core_subset['System'] != anchor_sys]
+                            
+                            if plot_data.empty and anchor_row.empty:
                                 continue
 
                             st.markdown(f"### 🧬 {core} 体系 ({m})")
 
                             # Create individual figure (Full Size)
                             fig_core = px.scatter(
-                                core_subset,
+                                plot_data,
                                 x="RMSD",
                                 y="AbsError",
                                 color="Substituent",
@@ -654,17 +664,30 @@ def main():
                                 color_discrete_sequence=px.colors.qualitative.Dark24
                             )
 
-                            # Style traces: Large markers, large text
+                            # Style traces: Small markers (9px), text
                             fig_core.update_traces(
                                 mode='markers+text',
                                 textposition='top center',
                                 textfont=dict(size=14, color='black'),
                                 marker=dict(
-                                    size=18, 
+                                    size=9, 
                                     opacity=0.8, 
                                     line=dict(width=1, color='DarkSlateGrey')
                                 )
                             )
+                            
+                            # --- Add Anchor Trace (Overlay) ---
+                            if not anchor_row.empty:
+                                fig_core.add_trace(go.Scatter(
+                                    x=anchor_row['RMSD'],
+                                    y=anchor_row['AbsError'],
+                                    mode='markers+text',
+                                    name=f'Anchor ({anchor_sys})',
+                                    text=[anchor_sys],
+                                    textposition='top center',
+                                    marker=dict(symbol='star', size=14, color='black', line=dict(width=1, color='white')),
+                                    showlegend=True
+                                ))
 
                             # Add Background Zones (Applicable to single plot)
                             fig_core.add_shape(type="rect", x0=0, x1=r_tol, y0=0, y1=e_tol, fillcolor="green", opacity=0.1, line_width=0, layer="below")
